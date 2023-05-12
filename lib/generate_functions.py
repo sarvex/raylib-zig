@@ -25,10 +25,7 @@ def c_to_zig_type(c: str) -> str:
     c = c.replace("const ", "")
     z = C_TO_ZIG.get(c)
 
-    if z is not None:
-        return const + z
-
-    return const + c
+    return const + z if z is not None else const + c
 
 
 def fix_pointer(name: str, t: str):
@@ -50,14 +47,11 @@ def fix_pointer(name: str, t: str):
 def fix_enums(arg_name, arg_type, func_name):
     # Hacking specifc enums in here
     # Raylib doesn't use the enums but rather the resulting ints
-    if arg_type == "int" or arg_type == "unsigned int":
+    if arg_type in ["int", "unsigned int"]:
         if arg_name == "key":
             arg_type = "KeyboardKey"
         elif arg_name == "button":
-            if "Gamepad" in func_name:
-                arg_type = "GamepadButton"
-            else:
-                arg_type = "MouseButton"
+            arg_type = "GamepadButton" if "Gamepad" in func_name else "MouseButton"
         elif arg_name == "mode" and func_name == "SetCameraMode":
             arg_type = "CameraMode"
         elif arg_name == "gesture":
@@ -75,8 +69,7 @@ def parse_header(header_name: str, output_file: str, prefix: str):
 
     leftover = ""
 
-    for line in header.readlines():
-
+    for line in header:
         if line.startswith("typedef struct"):
             zig_types.add(line.split(' ')[2])
         elif line.startswith("typedef enum"):
@@ -100,16 +93,19 @@ def parse_header(header_name: str, output_file: str, prefix: str):
         line = line.replace("  ", " ")
 
         # each (.*) is some variable value
-        result = re.search(prefix + "(.*) (.*)start_arg(.*)end_arg(.*)", line.replace("(", "start_arg").replace(")", "end_arg"))
+        result = re.search(
+            f"{prefix}(.*) (.*)start_arg(.*)end_arg(.*)",
+            line.replace("(", "start_arg").replace(")", "end_arg"),
+        )
 
         if result is None:
             leftover += line
             continue
 
         # get whats in the (.*)'s
-        return_type = result.group(1)
-        func_name = result.group(2)
-        arguments = result.group(3)
+        return_type = result[1]
+        func_name = result[2]
+        arguments = result[3]
 
         return_type = c_to_zig_type(return_type)
         func_name, return_type = fix_pointer(func_name, return_type)
@@ -121,7 +117,7 @@ def parse_header(header_name: str, output_file: str, prefix: str):
             if arg == "...":
                 zig_arguments.append("...")
                 continue
-            arg_type = " ".join(arg.split(" ")[0:-1])  # everything but the last element (for stuff like "const Vector3")
+            arg_type = " ".join(arg.split(" ")[:-1])
             arg_name = arg.split(" ")[-1]  # last element should be the name
             arg_type = fix_enums(arg_name, arg_type, func_name)
 
@@ -129,9 +125,9 @@ def parse_header(header_name: str, output_file: str, prefix: str):
             arg_name, arg_type = fix_pointer(arg_name, arg_type)
 
             zig_types.add(arg_type.replace("const ", ""))
-            zig_arguments.append(arg_name + ": " + arg_type)  # put everything together
+            zig_arguments.append(f"{arg_name}: {arg_type}")
         zig_arguments = ", ".join(zig_arguments)
-        zig_heads.append("pub extern fn " + func_name + "(" + zig_arguments + ") " + return_type + ";")
+        zig_heads.append(f"pub extern fn {func_name}({zig_arguments}) {return_type};")
 
     zigheader = open(output_file, mode="w")
     print("""const rl = @import("raylib-zig.zig");\n""", file=zigheader)
